@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MIMIC Prescriptions data analysis with ICU Filter</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #5aa8b0;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    #chart {
+      margin-top: 20px;
+    }
+    .bar {
+      fill: steelblue;
+    }
+    .bar:hover {
+      fill: orange;
+    }
+    .axis text {
+      font-size: 12px;
+    }
+    .axis path,
+    .axis line {
+      fill: none;
+      shape-rendering: crispEdges;
+    }
+    .x.axis path {
+      display: none;
+    }
+    .x.axis text {
+      transform: rotate(-45deg);
+      text-anchor: end;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f2f2f2;
+    }
+    #loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 24px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <h1>Prescriptions data analysis with ICU Filter</h1>
+  <div id="loading">Loading chart...</div>
+  <div>
+    <label>
+      <input type="checkbox" id="icuFilter"> Show only prescriptions used in ICU
+    </label>
+  </div>
+  <div id="chart"></div>
+  <div id="summary"></div>
+
+  <script>
+    // **1. Data Loading (Replace with your actual data loading)**
+    d3.csv("PRESCRIPTIONS.csv")
+      .then(data => { 
+        // Hide loading indicator
+        d3.select("#loading").style("display", "none");
+
+        let filteredData = data.filter(d => d.DRUG_NAME_GENERIC && d.DRUG_NAME_GENERIC.trim() !== "");
+
+        // **2. Data Processing (Example: Count occurrences of top 10 drugs)**
+        function processData(data) {
+          return d3.rollups(data, v => v.length, d => d.DRUG_NAME_GENERIC) 
+            .sort((a, b) => b[1] - a[1]) 
+            .slice(0, 10) 
+            .map(d => ({ drug: d[0], count: d[1] }));
+        }
+
+        let topDrugs = processData(filteredData);
+
+        // **3. Chart Dimensions**
+        const width = 900;
+        const height = 400;
+        const margin = { top: 25, right: 20, bottom: 100, left: 80 };
+
+        // **4. Create SVG**
+        const svg = d3.select("#chart")
+          .append("svg")
+          .attr("width", width)
+          .attr("height", height);
+
+        // **5. Scales**
+        const x = d3.scaleBand()
+          .domain(topDrugs.map(d => d.drug))
+          .range([margin.left, width - margin.right])
+          .padding(0.1);
+
+        const y = d3.scaleLinear()
+          .domain([0, d3.max(topDrugs, d => d.count)])
+          .range([height - margin.bottom, margin.top]);
+
+        // **6. Create Bars**
+        function updateChart(data) {
+          const bars = svg.selectAll(".bar")
+            .data(data);
+
+          bars.enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", d => x(d.drug))
+            .attr("y", d => y(d.count))
+            .attr("width", x.bandwidth())
+            .attr("height", d => height - margin.bottom - y(d.count))
+            .attr("fill", "steelblue")
+            .on("click", function(event, d) {
+              const drugData = filteredData.filter(item => item.DRUG_NAME_GENERIC === d.drug);
+              updateSummary(drugData);
+            })
+            .merge(bars)
+            .transition()
+            .duration(750)
+            .attr("x", d => x(d.drug))
+            .attr("y", d => y(d.count))
+            .attr("width", x.bandwidth())
+            .attr("height", d => height - margin.bottom - y(d.count));
+
+          bars.exit().remove();
+        }
+
+        // **7. Add Axes**
+        svg.append("g")
+          .attr("transform", `translate(0,${height - margin.bottom})`)
+          .call(d3.axisBottom(x))
+          .selectAll("text")
+          .style("text-anchor", "end")
+          .attr("transform", "rotate(-45)"); 
+
+        svg.append("g")
+          .attr("transform", `translate(${margin.left},0)`)
+          .call(d3.axisLeft(y))
+          .append("text")
+          .attr("transform", "rotate(-90)")
+          .attr("y", 6)
+          .attr("dy", "0.71em")
+          .attr("text-anchor", "end")
+          .text("Prescription Count");
+
+        // **8. Add Chart Title**
+        svg.append("text")
+          .attr("x", (width / 2))
+          .attr("y", 0 + (margin.top / 2))
+          .attr("text-anchor", "middle")
+          .style("font-size", "16px")
+          .text("Top 10 Prescribed Drugs in MIMIC");
+
+        // **9. Initial Chart Render**
+        updateChart(topDrugs);
+
+        // **10. Add ICU Filter Toggle**
+        d3.select("#icuFilter").on("change", function() {
+          const isChecked = d3.select(this).property("checked");
+          if (isChecked) {
+            filteredData = data.filter(d => d.DRUG_NAME_GENERIC && d.DRUG_NAME_GENERIC.trim() !== "" && d.ICUSTAY_ID && d.ICUSTAY_ID.trim() !== "");
+          } else {
+            filteredData = data.filter(d => d.DRUG_NAME_GENERIC && d.DRUG_NAME_GENERIC.trim() !== "");
+          }
+          topDrugs = processData(filteredData);
+          x.domain(topDrugs.map(d => d.drug));
+          y.domain([0, d3.max(topDrugs, d => d.count)]);
+          updateChart(topDrugs);
+        });
+
+        // **11. Update Summary Table**
+        function updateSummary(data) {
+          const summary = d3.select("#summary");
+          summary.html(""); // Clear previous content
+
+          const table = summary.append("table");
+          const thead = table.append("thead");
+          const tbody = table.append("tbody");
+
+          // Append header row
+          thead.append("tr")
+            .selectAll("th")
+            .data(["Drug Name", "ICU Stay ID", "Start Date", "End Date"])
+            .enter()
+            .append("th")
+            .text(d => d);
+
+          // Append data rows
+          const rows = tbody.selectAll("tr")
+            .data(data)
+            .enter()
+            .append("tr");
+
+          rows.selectAll("td")
+            .data(d => [d.DRUG_NAME_GENERIC, d.ICUSTAY_ID, d.STARTDATE, d.ENDDATE])
+            .enter()
+            .append("td")
+            .text(d => d);
+        }
+      })
+      .catch(error => {
+        console.error(error);
+        d3.select("#loading").text("Failed to load data.");
+      }); 
+  </script>
+</body>
+</html>
